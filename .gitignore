@@ -1,0 +1,21 @@
+# 数据库文件
+stock.db
+stock
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# 备份文件
+bak/
+
+# IDE
+.vscode/
+.idea/
+
+# Claude 本地配置
+.claude/
+
+# 系统文件
+.DS_Store
