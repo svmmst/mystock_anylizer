@@ -25,7 +25,7 @@ def run():
 
             try:
                 df = client.download_kline(
-                    code, start_date="2020-01-01", end_date="2026-04-22", adjustflag="2"
+                    code, start_date="2020-01-01", end_date="2026-04-22", adjustflag="3"
                 )
 
                 if df is not None:

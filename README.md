@@ -10,7 +10,7 @@ A 股量化数据下载与复权工具。基于 [baostock](http://baostock.com) 
 │   ├── config.py              # 数据库路径、请求间隔、重试次数等配置
 │   ├── baostock_client.py     # baostock 封装：登录、股票列表、K线、财务数据
 │   └── db.py                  # DuckDB 操作：建表、批量写入（去重）、数据校验
-├── full_a_share_download.py   # 全量 A 股日线数据下载（前复权）
+├── full_a_share_download.py   # 全量 A 股日线数据下载（不复权）
 ├── update_daily_price.py      # 日线数据增量更新（获取最新交易日数据）
 ├── build_qfq_v5.py            # 前复权价格计算系统（不复权 → 前复权）
 ├── sync_financials_by_quarter.py  # 季度财务数据同步（营收、净利润、ROE 等）
@@ -37,13 +37,13 @@ pip install -r requirements.txt
 
 数据库文件为 `stock.db`（本地文件，不纳入版本管理）。
 
-### daily_price（日线行情 — 前复权）
+### daily_price（日线行情 — 不复权）
 
 | 列 | 类型 | 说明 |
 |----|------|------|
 | code | VARCHAR | 股票代码，如 `sh.600000` |
 | date | DATE | 交易日 |
-| open/high/low/close | DOUBLE | 开/高/低/收（前复权价格） |
+| open/high/low/close | DOUBLE | 开/高/低/收（不复权价格） |
 | volume | DOUBLE | 成交量 |
 | amount | DOUBLE | 成交额 |
 
@@ -83,7 +83,7 @@ python full_a_share_download.py
 ```
 
 - 数据范围：2020-01-01 至今
-- 下载的是**前复权**数据（`adjustflag="2"`）
+- 下载的是**不复权**数据（`adjustflag="3"`）
 - 每批 100 只股票，批次间间隔 5 秒，单次请求间隔 0.8–1.8 秒（可在 `common/config.py` 调整）
 
 ### 第二步：增量更新日线
@@ -142,7 +142,7 @@ python sync_financials_by_quarter.py
 ```
 baostock 数据源
       │
-      ├─ query_history_k_data_plus() ──► daily_price（前复权/不复权）
+      ├─ query_history_k_data_plus() ──► daily_price（不复权）
       │                                       │
       │                              build_qfq_v5.py
       │                                       │
