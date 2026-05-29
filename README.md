@@ -19,7 +19,7 @@ requirements.txt               Python 依赖
 
 ## 数据源
 
-所有行情与财务数据均来自 [baostock](http://baostock.com/) —— 一个免费、无需 API Key 的 A 股数据源。
+所有行情与财务数据均来自 baostock（http://baostock.com），一个免费、无需 API Key 的 A 股数据源。
 
 ## 安装
 
@@ -37,7 +37,7 @@ pip install -r requirements.txt
 
 数据库文件为 `stock.db`（本地文件，不纳入版本管理）。
 
-### daily_price（日线行情 — 不复权）
+### daily_price（日线行情 - 不复权）
 
 | 列 | 类型 | 说明 |
 |----|------|------|
@@ -49,7 +49,7 @@ pip install -r requirements.txt
 
 主键：`(code, date)`
 
-### daily_price_qfq（日线行情 — 前复权）
+### daily_price_qfq（日线行情 - 前复权）
 
 由 `build_qfq_v5.py` 生成，结构与 `daily_price` 相同，但价格已通过复权因子转换为前复权。
 
