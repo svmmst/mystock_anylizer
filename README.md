@@ -5,16 +5,16 @@ A 股量化数据下载与复权工具。基于 [baostock](http://baostock.com) 
 ## 项目结构
 
 ```
-.
-├── common/
-│   ├── config.py              # 数据库路径、请求间隔、重试次数等配置
-│   ├── baostock_client.py     # baostock 封装：登录、股票列表、K线、财务数据
-│   └── db.py                  # DuckDB 操作：建表、批量写入（去重）、数据校验
-├── full_a_share_download.py   # 全量 A 股日线数据下载（不复权）
-├── update_daily_price.py      # 日线数据增量更新（获取最新交易日数据）
-├── build_qfq_v5.py            # 前复权价格计算系统（不复权 → 前复权）
-├── sync_financials_by_quarter.py  # 季度财务数据同步（营收、净利润、ROE 等）
-└── requirements.txt           # Python 依赖
+common/
+  config.py                    数据库路径、请求间隔、重试次数等配置
+  baostock_client.py           baostock 封装：登录、股票列表、K线、财务数据
+  db.py                        DuckDB 操作：建表、批量写入（去重）、数据校验
+
+full_a_share_download.py       全量 A 股日线数据下载（不复权）
+update_daily_price.py          日线数据增量更新
+build_qfq_v5.py                前复权价格计算系统（不复权 -> 前复权）
+sync_financials_by_quarter.py  季度财务数据同步（营收、净利润、ROE 等）
+requirements.txt               Python 依赖
 ```
 
 ## 数据源
@@ -141,19 +141,19 @@ python sync_financials_by_quarter.py
 
 ```
 baostock 数据源
-      │
-      ├─ query_history_k_data_plus() ──► daily_price（不复权）
-      │                                       │
-      │                              build_qfq_v5.py
-      │                                       │
-      │                              adjust_factor（复权因子）
-      │                                       │
-      │                              adjust_factor_daily（日频展开）
-      │                                       │
-      │                              daily_price_qfq（前复权价格）
-      │
-      ├─ query_profit_data() ──┬──► financials_raw（季度财务数据）
-      └─ query_growth_data() ──┘
+  |
+  +-- query_history_k_data_plus() ---> daily_price（不复权）
+  |                                      |
+  |                             build_qfq_v5.py
+  |                                      |
+  |                             adjust_factor（复权因子）
+  |                                      |
+  |                             adjust_factor_daily（日频展开）
+  |                                      |
+  |                             daily_price_qfq（前复权价格）
+  |
+  +-- query_profit_data() --+--> financials_raw（季度财务数据）
+  +-- query_growth_data() --+
 ```
 
 ## 注意事项
