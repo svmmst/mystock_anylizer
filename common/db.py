@@ -23,9 +23,21 @@ def init_daily_price(con):
     """)
 
 
-def get_stock_codes(con):
-    """从 stock_basic 表获取所有股票代码"""
-    return con.execute("SELECT code FROM stock_basic").fetchdf()["code"].tolist()
+def get_stock_codes(con, include_index=False):
+    """从 stock_basic 表获取股票代码。
+
+    默认只返回个股（type='stock'），排除指数（sh.000/sz.399/sh.880 等）。
+    include_index=True 时返回全部代码（含指数），兼容需要指数的场景。
+
+    注：若 type 列尚未生成（未运行 classify_stock_basic.py），则回退为返回全部代码，
+    保证旧库仍可正常工作。
+    """
+    cols = {row[0] for row in con.execute("DESCRIBE stock_basic").fetchall()}
+    if "type" in cols and not include_index:
+        sql = "SELECT code FROM stock_basic WHERE type = 'stock'"
+    else:
+        sql = "SELECT code FROM stock_basic"
+    return con.execute(sql).fetchdf()["code"].tolist()
 
 
 def get_codes_from_daily(con):
@@ -39,6 +51,14 @@ def get_last_date(con, code):
         "SELECT MAX(date) FROM daily_price WHERE code = ?", [code]
     ).fetchone()[0]
     return result
+
+
+def get_all_last_dates(con):
+    """批量获取所有股票的最新日期，返回 {code: date} 字典"""
+    rows = con.execute(
+        "SELECT code, MAX(date) as last_date FROM daily_price GROUP BY code"
+    ).fetchall()
+    return {row[0]: row[1] for row in rows}
 
 
 def batch_insert_daily(con, df):
