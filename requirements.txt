@@ -1,3 +1,5 @@
+tushare>=1.4
+pytdx
 baostock>=0.8.8
 duckdb>=1.0.0
 pandas>=2.0.0
