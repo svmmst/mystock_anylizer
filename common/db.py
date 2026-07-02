@@ -23,6 +23,32 @@ def init_daily_price(con):
     """)
 
 
+def init_index_basic(con):
+    """创建指数基础信息表（Tushare index_basic 接口的字段映射）。
+
+    与 stock_basic 分离：指数不再混在个股表里。字段直接映射 Tushare 的 12 个
+    输出字段，code 存本地格式（sz.399006，由 ts_code 转换），全库统一以 code 为准。
+    注：desc 是 SQL 保留字，建表/写入时必须双引号转义。
+    """
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS index_basic (
+            code        VARCHAR PRIMARY KEY,
+            ts_code     VARCHAR,
+            name        VARCHAR,
+            fullname    VARCHAR,
+            market      VARCHAR,
+            publisher   VARCHAR,
+            index_type  VARCHAR,
+            category    VARCHAR,
+            base_date   VARCHAR,
+            base_point  DOUBLE,
+            list_date   VARCHAR,
+            weight_rule VARCHAR,
+            "desc"      VARCHAR
+        )
+    """)
+
+
 def get_stock_codes(con, include_index=False):
     """从 stock_basic 表获取股票代码。
 

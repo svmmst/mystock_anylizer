@@ -8,16 +8,19 @@
 python daily_update.py
 ```
 
-该脚本按顺序串联执行以下三步：
+该脚本按顺序串联执行以下四步：
 
 ```bash
-# 1. 同步股票基础信息（名称/行业等，Tushare）——非关键步骤
+# 1. 同步指数基础信息（Tushare index_basic）——非关键步骤
+python sync_index_basic.py --if-stale
+
+# 2. 同步股票基础信息（名称/行业等，Tushare）——非关键步骤
 python sync_stock_basic.py --if-stale
 
-# 2. 增量更新日线数据（不复权，Tushare）——关键步骤
+# 3. 增量更新日线数据（不复权，Tushare）——关键步骤
 python update_daily_price_v3.py
 
-# 3. 增量更新复权因子 + 重建前复权表（pytdx）——关键步骤
+# 4. 增量更新复权因子 + 重建前复权表（pytdx）——关键步骤
 python rebuild_factor_pytdx.py --update
 ```
 
@@ -25,16 +28,17 @@ python rebuild_factor_pytdx.py --update
 
 **中断规则**：
 
-- 第 1 步为**非关键步骤**，失败或跳过都不中止，继续执行行情/因子更新
-  （行情本身不依赖 stock_basic，新股一上市当天就会进 daily_price）。
-- 第 2、3 步为**关键步骤**，有依赖关系（因子依赖日线），顺序不可颠倒，任一失败即中止。
+- 第 1、2 步为**非关键步骤**，失败或跳过都不中止，继续执行行情/因子更新
+  （行情本身不依赖 index_basic / stock_basic，新股一上市当天就会进 daily_price）。
+- 第 3、4 步为**关键步骤**，有依赖关系（因子依赖日线），顺序不可颠倒，任一失败即中止。
 
-**为何把基础信息放最前**：让新上市股票的名称先就位，避免出现「daily_price 有行情但
-stock_basic 查不到名称」的窗口。
+**为何把基础信息放最前**：让新代码信息先就位，避免出现「daily_price 有行情但
+基础信息表查不到名称」的窗口。
 
-**限流自保护**（`--if-stale`）：Tushare `stock_basic` 接口限 **1 次/小时**。脚本会用时间戳文件
-`.stock_basic_last_sync` 记录上次成功时间，距上次不足 1 小时则直接打印提示并跳过（退出码 0）。
-即便真的撞上限流，脚本也会捕获并以跳过处理，均不影响后续行情与因子更新。
+**限流自保护**（`--if-stale`）：Tushare `index_basic` / `stock_basic` 接口均限 **1 次/小时**。
+两个脚本各用独立时间戳文件（`.index_basic_last_sync` / `.stock_basic_last_sync`）记录上次成功时间，
+距上次不足 1 小时则直接打印提示并跳过（退出码 0）。即便真撞上限流，脚本也会捕获并以跳过处理，
+均不影响后续行情与因子更新。
 
 ---
 
@@ -64,16 +68,23 @@ stock_basic 查不到名称」的窗口。
 | `build_qfq_v7.py` | 备选方案（Tushare因子） | Tushare Pro | 受频率限制 |
 | `rebuild_adjust_factor.py` | 备选方案（Baostock因子） | Baostock多进程 | 10-20分钟 |
 
-### 股票基础信息
+### 股票 / 指数基础信息
+
+个股与指数的基础信息已分离到两张表：个股在 `stock_basic`，指数在 `index_basic`。
 
 | 脚本 | 用途 | 数据源 | 耗时 |
 |------|------|--------|------|
-| `sync_stock_basic.py` | 同步全市场基础信息（名称/行业/市场/上市日期等），补充到 stock_basic 表；`--if-stale` 距上次成功不足 1 小时则跳过 | Tushare Pro | 几秒（接口限1次/小时） |
-| `classify_stock_basic.py` | 给 stock_basic 打 type 标签（个股/指数），规则同 market_regime.py | 本地SQL | <1秒 |
+| `sync_stock_basic.py` | 同步全市场**个股**基础信息（名称/行业/市场/上市日期等）到 stock_basic 表；`--if-stale` 距上次成功不足 1 小时则跳过 | Tushare Pro | 几秒（接口限1次/小时） |
+| `sync_index_basic.py` | 同步**指数**基础信息（名称/全称/发布方/类别等）到 index_basic 表，全量刷新；`--if-stale` 同上，用独立时间戳文件 | Tushare Pro | 几秒（接口限1次/小时） |
+| `classify_stock_basic.py` | 给 stock_basic 打 type 标签（个股/指数），index 规则现仅作兜底护栏 | 本地SQL | <1秒 |
 | `prune_stock_basic.py` | 清理空壳代码（无名称且两张行情表均无数据），`--dry-run` 只统计不删 | 本地SQL | <1秒 |
+| `prune_index_from_stock_basic.py` | 一次性迁移：从 stock_basic 剔除指数（`type='index'`），**不动行情表**，`--dry-run` 只统计不删 | 本地SQL | <1秒 |
 
-> `sync_stock_basic.py` 会在同步后自动调用 `classify_stock_basic` 的分类逻辑，
-> 新纳入的股票会立即带上 `type='stock'`，无需手动再跑分类。
+> - `sync_stock_basic.py` 会在同步后自动调用 `classify_stock_basic` 的分类逻辑，
+>   新纳入的股票会立即带上 `type='stock'`，无需手动再跑分类。
+> - 指数的**行情**仍保留在 `daily_price` / `daily_price_qfq`（供 `market_regime.py`、
+>   `daily_pick.py` 择时使用）；`sync_index_basic.py` 只维护指数的**基础信息**，不涉及行情。
+> - 指数不分红不除权，**无复权概念**（本库指数全为深证 sz.399xxx）。
 
 ### 财务数据
 
@@ -113,21 +124,34 @@ stock_basic 查不到名称」的窗口。
 | `adjust_factor_tushare` | 每日复权因子 | 无 |
 | `xdxr_events` | 除权除息事件记录（增量对比基准） | (code, date) |
 | `financials_raw` | 季度财务数据 | (code, report_date) |
-| `stock_basic` | 股票基础信息（代码/名称/行业/市场/上市日期/type 等） | 无 |
+| `stock_basic` | **个股**基础信息（代码/名称/行业/市场/上市日期/type） | 无 |
+| `index_basic` | **指数**基础信息（Tushare index_basic 全字段，全量刷新） | code |
 
-### stock_basic 表字段
+### stock_basic 表字段（仅个股）
 
 | 字段 | 说明 |
 |------|------|
 | `code` | 本地格式代码（如 sz.300154），项目内所有表统一以此为准 |
-| `name` | 股票中文名称（指数及无数据代码可能为空） |
+| `name` | 股票中文名称 |
 | `area` / `industry` / `market` | 地域 / 所属行业 / 市场类型 |
 | `list_date` / `list_status` / `delist_date` | 上市日期 / 上市状态 / 退市日期 |
-| `type` | `stock`（个股）或 `index`（指数：sh.000/sz.399/sh.880 号段） |
+| `type` | 恒为 `stock`（指数已迁出，`index` 分类仅作兜底护栏） |
 
-> `common.db.get_stock_codes(con)` 默认只返回 `type='stock'` 的个股，
-> 传 `include_index=True` 返回全部（含指数）。指数（如 sz.399001 深证成指）
-> 被 `market_regime.py`、`daily_pick.py` 用于择时，保留在表内不删除。
+> 指数已从 stock_basic **剔除**并迁至 `index_basic` 表。`common.db.get_stock_codes(con)`
+> 默认只返回 `type='stock'` 的个股。注意：指数的**行情**仍保留在 `daily_price` /
+> `daily_price_qfq`（供 `market_regime.py`、`daily_pick.py` 择时用），只是基础信息不在 stock_basic。
+
+### index_basic 表字段（指数）
+
+| 字段 | 说明 |
+|------|------|
+| `code` | 本地格式代码（如 sz.399006），主键 |
+| `ts_code` | Tushare 原始代码（如 399006.SZ） |
+| `name` / `fullname` | 简称 / 全称（如 创业板指） |
+| `market` / `publisher` | 市场（SZSE 等） / 发布方 |
+| `index_type` / `category` | 指数风格 / 类别 |
+| `base_date` / `base_point` | 基期 / 基点 |
+| `list_date` / `weight_rule` / `desc` | 发布日期 / 加权方式 / 描述 |
 
 ---
 

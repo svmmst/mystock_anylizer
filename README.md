@@ -18,14 +18,16 @@ pip install -r requirements.txt
 python daily_update.py
 ```
 
-该命令按顺序串联三步:
+该命令按顺序串联四步:
 
-1. **同步股票基础信息**(名称/行业等,Tushare)—— 非关键步骤,失败/跳过不影响后续
-2. **增量更新日线数据**(不复权,Tushare)—— 关键步骤
-3. **增量更新复权因子 + 重建前复权表**(pytdx)—— 关键步骤
+1. **同步指数基础信息**(Tushare index_basic)—— 非关键步骤,失败/跳过不影响后续
+2. **同步股票基础信息**(名称/行业等,Tushare)—— 非关键步骤,失败/跳过不影响后续
+3. **增量更新日线数据**(不复权,Tushare)—— 关键步骤
+4. **增量更新复权因子 + 重建前复权表**(pytdx)—— 关键步骤
 
-第 1 步带 1 小时限流自保护(Tushare `stock_basic` 接口限 1 次/小时),距上次成功不足
-1 小时会自动跳过。第 2、3 步有依赖关系(因子依赖日线),任一失败即中止。
+前两步带 1 小时限流自保护(Tushare index_basic / stock_basic 接口各限 1 次/小时,
+用独立时间戳文件),距上次成功不足 1 小时会自动跳过。第 3、4 步有依赖关系(因子依赖日线),
+任一失败即中止。
 
 ## 数据源
 
@@ -61,7 +63,8 @@ Tushare token 配置在 `common/config.py` 的 `TUSHARE_TOKEN`。
 | `update_daily_price_v3.py` | 增量更新日线(Tushare) |
 | `rebuild_factor_pytdx.py --update` | 增量更新复权因子 + 重建前复权表(pytdx) |
 | `rebuild_daily_price.py` | 全量重建日线(Baostock,2-3 小时) |
-| `sync_stock_basic.py` | 同步股票基础信息(名称/行业等,Tushare) |
+| `sync_stock_basic.py` | 同步个股基础信息(名称/行业等,Tushare) |
+| `sync_index_basic.py` | 同步指数基础信息到 index_basic 表(Tushare) |
 | `sync_financials_by_quarter.py` | 季度财务数据同步 |
 | `tech_screen.py` / `daily_pick.py` | 技术选股 / 每日选股 |
 | `backtest_strategy.py` / `market_regime.py` | 回测策略 / 市场状态判断 |
@@ -76,20 +79,22 @@ Tushare token 配置在 `common/config.py` 的 `TUSHARE_TOKEN`。
 | `daily_price_qfq` | 前复权日线(由因子计算生成) | 无(CREATE TABLE AS) |
 | `adjust_factor_tushare` | 每日复权因子 | 无 |
 | `xdxr_events` | 除权除息事件记录(增量对比基准) | (code, date) |
-| `stock_basic` | 股票基础信息(代码/名称/行业/市场/上市日期/type) | 无 |
+| `stock_basic` | **个股**基础信息(代码/名称/行业/市场/上市日期/type) | 无 |
+| `index_basic` | **指数**基础信息(Tushare index_basic 全字段) | code |
 | `financials_raw` | 季度财务数据 | (code, report_date) |
 
-### stock_basic 关键字段
+### stock_basic 关键字段(仅个股)
 
 | 字段 | 说明 |
 |------|------|
 | `code` | 本地格式代码(如 `sz.300154`),项目内所有表统一以此为准 |
-| `name` | 股票中文名称(指数及无数据代码可能为空) |
+| `name` | 股票中文名称 |
 | `industry` / `market` / `list_date` | 所属行业 / 市场类型 / 上市日期 |
-| `type` | `stock`(个股)或 `index`(指数:sh.000 / sz.399 / sh.880 号段) |
+| `type` | 恒为 `stock`(指数已迁至 index_basic 表,index 分类仅作兜底) |
 
-> `common.db.get_stock_codes(con)` 默认只返回 `type='stock'` 的个股,传 `include_index=True`
-> 返回全部(含指数)。指数(如 `sz.399001` 深证成指)被择时/回测脚本使用,保留在表内不删除。
+> 指数已从 stock_basic 剔除并迁至 `index_basic` 表,`common.db.get_stock_codes(con)`
+> 默认只返回个股。注意:指数的**行情**仍保留在 `daily_price` / `daily_price_qfq`
+> (供 `market_regime.py`、`daily_pick.py` 择时使用),只是基础信息不在 stock_basic。
 
 ## 复权因子计算原理
 

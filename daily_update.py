@@ -24,11 +24,13 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent
 
 # 按顺序执行的步骤：(描述, [命令参数], 是否关键步骤)
-# - 第 1 步同步基础信息放最前，保证新股名称先就位（行情本身不依赖它）；
-#   标记为非关键（critical=False）：失败或跳过都不中止，继续后面的行情/因子更新。
-#   带 --if-stale：距上次成功同步不足 1 小时则自动跳过，避免撞 Tushare 1次/小时限流。
+# - 前两步同步基础信息（指数、个股）放最前，保证新代码信息先就位（行情本身不依赖它们）；
+#   均标记为非关键（critical=False）：失败或跳过都不中止，继续后面的行情/因子更新。
+#   均带 --if-stale：距上次成功同步不足 1 小时则自动跳过，避免撞 Tushare 1次/小时限流。
+#   指数与个股各用独立时间戳文件，互不影响。
 # - 后两步是核心行情+因子，有依赖关系（因子依赖日线），顺序不可颠倒，任一失败即中止。
 STEPS = [
+    ("同步指数基础信息（Tushare index_basic）", ["sync_index_basic.py", "--if-stale"], False),
     ("同步股票基础信息（名称/行业等，Tushare）", ["sync_stock_basic.py", "--if-stale"], False),
     ("增量更新日线数据（Tushare）", ["update_daily_price_v3.py"], True),
     ("增量更新复权因子 + 重建前复权表（pytdx）", ["rebuild_factor_pytdx.py", "--update"], True),

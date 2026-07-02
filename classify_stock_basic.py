@@ -2,12 +2,17 @@
 stock_basic 代码分类 — 区分个股 / 指数
 
 背景：
-  stock_basic 表中混有指数代码（如 sz.399001 深证成指），这些指数在
-  daily_price 里有历史行情，且被 market_regime.py / daily_pick.py 用于择时，
-  因此不能删除。本脚本新增 type 列做区分，谁都不删，纯增量、零破坏。
+  本脚本给 stock_basic 打 type 标签区分个股/指数。
+
+  注意：指数基础信息已迁至独立的 index_basic 表，stock_basic 中的指数记录也已
+  由 prune_index_from_stock_basic.py 剔除，因此正常情况下本表不再含指数（index=0）。
+  但本脚本的 index 分类规则保留作“兜底护栏”——万一 Tushare stock_basic 未来意外
+  返回带指数号段的 code，仍会被正确标成 index 而不会混进个股。
+  它主要由 sync_stock_basic.py 在同步后调用，给新 INSERT 的个股补 type='stock'，
+  保证 get_stock_codes() 不漏新股。指数的“行情”仍留在 daily_price/daily_price_qfq 供择时用。
 
 分类规则（与 market_regime.py 的既有惯例保持一致）：
-  指数号段：sh.000%、sz.399%、sh.880%  -> type = 'index'
+  指数号段：sh.000%、sz.399%、sh.880%  -> type = 'index'（兜底）
   其余                                  -> type = 'stock'
 
 用法：
