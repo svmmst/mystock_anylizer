@@ -28,12 +28,15 @@ BASE_DIR = Path(__file__).resolve().parent
 #   均标记为非关键（critical=False）：失败或跳过都不中止，继续后面的行情/因子更新。
 #   均带 --if-stale：距上次成功同步不足 1 小时则自动跳过，避免撞 Tushare 1次/小时限流。
 #   指数与个股各用独立时间戳文件，互不影响。
-# - 后两步是核心行情+因子，有依赖关系（因子依赖日线），顺序不可颠倒，任一失败即中止。
+# - 中间两步是核心行情+因子，有依赖关系（因子依赖日线），顺序不可颠倒，任一失败即中止。
+# - 最后一步更新指数行情（pytdx，无限流），与个股因子链无依赖，非关键：
+#   指数只服务择时，失败可次日补，不应中断个股主链。
 STEPS = [
     ("同步指数基础信息（Tushare index_basic）", ["sync_index_basic.py", "--if-stale"], False),
     ("同步股票基础信息（名称/行业等，Tushare）", ["sync_stock_basic.py", "--if-stale"], False),
     ("增量更新日线数据（Tushare）", ["update_daily_price_v3.py"], True),
     ("增量更新复权因子 + 重建前复权表（pytdx）", ["rebuild_factor_pytdx.py", "--update"], True),
+    ("增量更新指数行情（pytdx）", ["sync_index_daily.py"], False),
 ]
 
 

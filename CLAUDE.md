@@ -8,7 +8,7 @@
 python daily_update.py
 ```
 
-该脚本按顺序串联执行以下四步：
+该脚本按顺序串联执行以下五步：
 
 ```bash
 # 1. 同步指数基础信息（Tushare index_basic）——非关键步骤
@@ -22,6 +22,9 @@ python update_daily_price_v3.py
 
 # 4. 增量更新复权因子 + 重建前复权表（pytdx）——关键步骤
 python rebuild_factor_pytdx.py --update
+
+# 5. 增量更新指数行情（pytdx）——非关键步骤
+python sync_index_daily.py
 ```
 
 也可单独手动执行上述各步。
@@ -31,6 +34,8 @@ python rebuild_factor_pytdx.py --update
 - 第 1、2 步为**非关键步骤**，失败或跳过都不中止，继续执行行情/因子更新
   （行情本身不依赖 index_basic / stock_basic，新股一上市当天就会进 daily_price）。
 - 第 3、4 步为**关键步骤**，有依赖关系（因子依赖日线），顺序不可颠倒，任一失败即中止。
+- 第 5 步更新指数行情（pytdx 无限流），与个股因子链无依赖，**非关键**：指数只服务
+  择时，失败可次日补，不应中断个股主链。
 
 **为何把基础信息放最前**：让新代码信息先就位，避免出现「daily_price 有行情但
 基础信息表查不到名称」的窗口。
@@ -68,23 +73,26 @@ python rebuild_factor_pytdx.py --update
 | `build_qfq_v7.py` | 备选方案（Tushare因子） | Tushare Pro | 受频率限制 |
 | `rebuild_adjust_factor.py` | 备选方案（Baostock因子） | Baostock多进程 | 10-20分钟 |
 
-### 股票 / 指数基础信息
+### 指数管理（与个股彻底分离）
 
-个股与指数的基础信息已分离到两张表：个股在 `stock_basic`，指数在 `index_basic`。
+指数的**基础信息**和**行情**都已从个股表分离，各自独立成表：
 
 | 脚本 | 用途 | 数据源 | 耗时 |
 |------|------|--------|------|
-| `sync_stock_basic.py` | 同步全市场**个股**基础信息（名称/行业/市场/上市日期等）到 stock_basic 表；`--if-stale` 距上次成功不足 1 小时则跳过 | Tushare Pro | 几秒（接口限1次/小时） |
-| `sync_index_basic.py` | 同步**指数**基础信息（名称/全称/发布方/类别等）到 index_basic 表，全量刷新；`--if-stale` 同上，用独立时间戳文件 | Tushare Pro | 几秒（接口限1次/小时） |
+| `sync_stock_basic.py` | 同步全市场**个股**基础信息到 stock_basic 表；`--if-stale` 距上次成功不足 1 小时则跳过 | Tushare Pro | 几秒（接口限1次/小时） |
+| `sync_index_basic.py` | 同步**指数基础信息**（名称/全称/发布方/类别等）到 index_basic 表，全量刷新；`--if-stale` 用独立时间戳文件 | Tushare Pro | 几秒（接口限1次/小时） |
+| `sync_index_daily.py` | 同步**指数行情**到 index_daily_price 表（含涨跌家数）；默认增量，`--full` 全量翻页重灌 | pytdx（通达信） | 增量秒级，全量约12分钟 |
 | `classify_stock_basic.py` | 给 stock_basic 打 type 标签（个股/指数），index 规则现仅作兜底护栏 | 本地SQL | <1秒 |
 | `prune_stock_basic.py` | 清理空壳代码（无名称且两张行情表均无数据），`--dry-run` 只统计不删 | 本地SQL | <1秒 |
-| `prune_index_from_stock_basic.py` | 一次性迁移：从 stock_basic 剔除指数（`type='index'`），**不动行情表**，`--dry-run` 只统计不删 | 本地SQL | <1秒 |
+| `prune_index_from_stock_basic.py` | 一次性迁移：从 stock_basic 剔除指数（`type='index'`），不动行情表 | 本地SQL | <1秒 |
+| `prune_index_from_daily.py` | 一次性迁移：从 daily_price 剔除指数行情（带前置守卫，确认 index_daily_price 已就绪才删） | 本地SQL | 秒级 |
 
-> - `sync_stock_basic.py` 会在同步后自动调用 `classify_stock_basic` 的分类逻辑，
->   新纳入的股票会立即带上 `type='stock'`，无需手动再跑分类。
-> - 指数的**行情**仍保留在 `daily_price` / `daily_price_qfq`（供 `market_regime.py`、
->   `daily_pick.py` 择时使用）；`sync_index_basic.py` 只维护指数的**基础信息**，不涉及行情。
-> - 指数不分红不除权，**无复权概念**（本库指数全为深证 sz.399xxx）。
+> - **指数行情用 pytdx（无频率限制），不用 Tushare**（Tushare index_daily 限流 1次/小时不可行）。
+>   pytdx 指数量纲：`volume = pytdx vol × 10000`（与个股 daily_price 口径一致），`amount` 已是元。
+> - 指数行情已从 `daily_price` / `daily_price_qfq` **剥离**，只在 `index_daily_price`。
+>   `market_regime.py` / `daily_pick.py` / `backtest_*` 均已改为从 index_daily_price 读指数。
+> - 指数不分红不除权，**无复权概念**（因子恒为 1.0），故指数行情不进因子/前复权流程。
+> - `market_regime.py` 的创业板指已由旧代码 sz.399003 修正为正确的 **sz.399006**（数据自 2010 年起）。
 
 ### 财务数据
 
@@ -119,13 +127,14 @@ python rebuild_factor_pytdx.py --update
 
 | 表名 | 说明 | 主键 |
 |------|------|------|
-| `daily_price` | 不复权日线 OHLCV | (code, date) |
-| `daily_price_qfq` | 前复权日线（由因子计算生成） | 无（CREATE TABLE AS） |
-| `adjust_factor_tushare` | 每日复权因子 | 无 |
+| `daily_price` | 不复权日线 OHLCV（**仅个股**） | (code, date) |
+| `daily_price_qfq` | 前复权日线（由因子计算生成，**仅个股**） | 无（CREATE TABLE AS） |
+| `adjust_factor_tushare` | 每日复权因子（**仅个股**） | 无 |
 | `xdxr_events` | 除权除息事件记录（增量对比基准） | (code, date) |
 | `financials_raw` | 季度财务数据 | (code, report_date) |
 | `stock_basic` | **个股**基础信息（代码/名称/行业/市场/上市日期/type） | 无 |
 | `index_basic` | **指数**基础信息（Tushare index_basic 全字段，全量刷新） | code |
+| `index_daily_price` | **指数**日线行情（pytdx，OHLCV+amount+涨跌家数） | (code, date) |
 
 ### stock_basic 表字段（仅个股）
 
@@ -152,6 +161,15 @@ python rebuild_factor_pytdx.py --update
 | `index_type` / `category` | 指数风格 / 类别 |
 | `base_date` / `base_point` | 基期 / 基点 |
 | `list_date` / `weight_rule` / `desc` | 发布日期 / 加权方式 / 描述 |
+
+### index_daily_price 表字段（指数行情）
+
+| 字段 | 说明 |
+|------|------|
+| `code` / `date` | 指数代码 / 交易日，复合主键 |
+| `open` / `high` / `low` / `close` | 开/高/低/收（指数点位，不复权） |
+| `volume` / `amount` | 成交量（pytdx vol × 10000） / 成交额（元） |
+| `up_count` / `down_count` | 指数专有：成分股当日上涨 / 下跌家数 |
 
 ---
 

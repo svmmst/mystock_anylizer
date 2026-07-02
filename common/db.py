@@ -49,6 +49,46 @@ def init_index_basic(con):
     """)
 
 
+def init_index_daily_price(con):
+    """创建指数日线行情表（数据源 pytdx，与个股 daily_price 分离）。
+
+    结构与 daily_price 对齐（列名同为 volume/amount，便于消费方 SQL 只改表名），
+    另含指数专有的 up_count/down_count（成分股当日涨/跌家数）。
+    整表统一 pytdx 口径，不与旧 Baostock 数据拼接。
+    """
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS index_daily_price (
+            code       VARCHAR,
+            date       DATE,
+            open       DOUBLE,
+            high       DOUBLE,
+            low        DOUBLE,
+            close      DOUBLE,
+            volume     DOUBLE,
+            amount     DOUBLE,
+            up_count   INTEGER,
+            down_count INTEGER,
+            PRIMARY KEY (code, date)
+        )
+    """)
+
+
+def batch_insert_index_daily(con, df):
+    """批量写入指数日线（去重：按 code+date 防重复）"""
+    if df is None or df.empty:
+        return
+    con.register("_tmp_index_daily", df)
+    con.execute("""
+        INSERT INTO index_daily_price
+        SELECT * FROM _tmp_index_daily d
+        WHERE NOT EXISTS (
+            SELECT 1 FROM index_daily_price t
+            WHERE t.code = d.code AND t.date = d.date
+        )
+    """)
+    con.unregister("_tmp_index_daily")
+
+
 def get_stock_codes(con, include_index=False):
     """从 stock_basic 表获取股票代码。
 

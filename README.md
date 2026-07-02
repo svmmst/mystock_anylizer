@@ -18,16 +18,17 @@ pip install -r requirements.txt
 python daily_update.py
 ```
 
-该命令按顺序串联四步:
+该命令按顺序串联五步:
 
 1. **同步指数基础信息**(Tushare index_basic)—— 非关键步骤,失败/跳过不影响后续
 2. **同步股票基础信息**(名称/行业等,Tushare)—— 非关键步骤,失败/跳过不影响后续
 3. **增量更新日线数据**(不复权,Tushare)—— 关键步骤
 4. **增量更新复权因子 + 重建前复权表**(pytdx)—— 关键步骤
+5. **增量更新指数行情**(pytdx)—— 非关键步骤
 
 前两步带 1 小时限流自保护(Tushare index_basic / stock_basic 接口各限 1 次/小时,
 用独立时间戳文件),距上次成功不足 1 小时会自动跳过。第 3、4 步有依赖关系(因子依赖日线),
-任一失败即中止。
+任一失败即中止。第 5 步用 pytdx(无限流)更新指数行情,与个股链无依赖,失败可次日补。
 
 ## 数据源
 
@@ -65,6 +66,7 @@ Tushare token 配置在 `common/config.py` 的 `TUSHARE_TOKEN`。
 | `rebuild_daily_price.py` | 全量重建日线(Baostock,2-3 小时) |
 | `sync_stock_basic.py` | 同步个股基础信息(名称/行业等,Tushare) |
 | `sync_index_basic.py` | 同步指数基础信息到 index_basic 表(Tushare) |
+| `sync_index_daily.py` | 同步指数行情到 index_daily_price 表(pytdx,无限流) |
 | `sync_financials_by_quarter.py` | 季度财务数据同步 |
 | `tech_screen.py` / `daily_pick.py` | 技术选股 / 每日选股 |
 | `backtest_strategy.py` / `market_regime.py` | 回测策略 / 市场状态判断 |
@@ -75,13 +77,18 @@ Tushare token 配置在 `common/config.py` 的 `TUSHARE_TOKEN`。
 
 | 表名 | 说明 | 主键 |
 |------|------|------|
-| `daily_price` | 不复权日线 OHLCV | (code, date) |
-| `daily_price_qfq` | 前复权日线(由因子计算生成) | 无(CREATE TABLE AS) |
-| `adjust_factor_tushare` | 每日复权因子 | 无 |
+| `daily_price` | 不复权日线 OHLCV(**仅个股**) | (code, date) |
+| `daily_price_qfq` | 前复权日线(由因子计算生成,**仅个股**) | 无(CREATE TABLE AS) |
+| `adjust_factor_tushare` | 每日复权因子(**仅个股**) | 无 |
 | `xdxr_events` | 除权除息事件记录(增量对比基准) | (code, date) |
 | `stock_basic` | **个股**基础信息(代码/名称/行业/市场/上市日期/type) | 无 |
 | `index_basic` | **指数**基础信息(Tushare index_basic 全字段) | code |
+| `index_daily_price` | **指数**日线行情(pytdx,OHLCV+amount+涨跌家数) | (code, date) |
 | `financials_raw` | 季度财务数据 | (code, report_date) |
+
+> 指数已与个股彻底分离:基础信息在 `index_basic`,行情在 `index_daily_price`(pytdx 数据源,
+> 无频率限制)。`market_regime.py` / `daily_pick.py` / 回测脚本均从 index_daily_price 读指数。
+> 指数不复权,不进因子/前复权流程。
 
 ### stock_basic 关键字段(仅个股)
 
