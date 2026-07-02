@@ -23,13 +23,15 @@ from pathlib import Path
 # 脚本所在目录，保证无论从哪里调用都能定位到子脚本
 BASE_DIR = Path(__file__).resolve().parent
 
-# 按顺序执行的步骤：(描述, [命令参数])
-# 前两步有依赖关系（因子依赖日线），顺序不可颠倒；
-# 第三步同步基础信息与前两步无依赖，放最后，即使失败也不影响核心行情/因子更新。
+# 按顺序执行的步骤：(描述, [命令参数], 是否关键步骤)
+# - 第 1 步同步基础信息放最前，保证新股名称先就位（行情本身不依赖它）；
+#   标记为非关键（critical=False）：失败或跳过都不中止，继续后面的行情/因子更新。
+#   带 --if-stale：距上次成功同步不足 1 小时则自动跳过，避免撞 Tushare 1次/小时限流。
+# - 后两步是核心行情+因子，有依赖关系（因子依赖日线），顺序不可颠倒，任一失败即中止。
 STEPS = [
-    ("增量更新日线数据（Tushare）", ["update_daily_price_v3.py"]),
-    ("增量更新复权因子 + 重建前复权表（pytdx）", ["rebuild_factor_pytdx.py", "--update"]),
-    ("同步股票基础信息（名称/行业等，Tushare）", ["sync_stock_basic.py"]),
+    ("同步股票基础信息（名称/行业等，Tushare）", ["sync_stock_basic.py", "--if-stale"], False),
+    ("增量更新日线数据（Tushare）", ["update_daily_price_v3.py"], True),
+    ("增量更新复权因子 + 重建前复权表（pytdx）", ["rebuild_factor_pytdx.py", "--update"], True),
 ]
 
 
@@ -59,12 +61,16 @@ def main():
         print("   当天日线可能尚未生成，建议 16:00 之后再运行。")
 
     total = len(STEPS)
-    for i, (desc, args) in enumerate(STEPS, start=1):
+    for i, (desc, args, critical) in enumerate(STEPS, start=1):
         ok = run_step(i, total, desc, args)
         if not ok:
-            print(f"\n❌ 步骤 {i}（{desc}）执行失败，已中止后续步骤。")
-            print("   请检查上方报错；修复后可重新运行 python daily_update.py")
-            sys.exit(1)
+            if critical:
+                print(f"\n❌ 步骤 {i}（{desc}）执行失败，已中止后续步骤。")
+                print("   请检查上方报错；修复后可重新运行 python daily_update.py")
+                sys.exit(1)
+            # 非关键步骤失败：仅告警，继续后续（行情/因子更新不受影响）
+            print(f"\n⚠️ 步骤 {i}（{desc}）未成功，但为非关键步骤，继续后续更新。\n")
+            continue
         print(f"✅ 步骤 {i} 完成\n")
 
     print("=" * 60)

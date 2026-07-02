@@ -20,12 +20,32 @@
   delist_date 退市日期
 """
 
+import sys
 import time
+from pathlib import Path
 
 import tushare as ts
 
 from common import db
 from common.config import TUSHARE_TOKEN
+
+# 记录上次成功同步时间的时间戳文件（与脚本同目录，内容为 unix 秒的浮点数）
+LAST_SYNC_FILE = Path(__file__).resolve().parent / ".stock_basic_last_sync"
+# Tushare stock_basic 接口限 1 次/小时，据此设最小同步间隔
+MIN_SYNC_INTERVAL = 3600  # 秒
+
+
+def _read_last_sync():
+    """读取上次成功同步的 unix 时间戳；无记录或损坏则返回 None。"""
+    try:
+        return float(LAST_SYNC_FILE.read_text().strip())
+    except (FileNotFoundError, ValueError):
+        return None
+
+
+def _write_last_sync(ts_now):
+    """记录本次成功同步时间。"""
+    LAST_SYNC_FILE.write_text(str(ts_now))
 
 # 需要补充到 stock_basic 表的列（列名 -> DuckDB 类型）
 # code 列已存在，不在此列表中，保证既有结构不被破坏
@@ -105,11 +125,31 @@ def run():
     t_start = time.time()
     print("股票基础信息同步（Tushare Pro stock_basic）")
 
+    # --if-stale：距上次成功同步不足 1 小时则跳过（避免撞 Tushare 1次/小时限流）。
+    # 跳过时以成功退出码返回，供 daily_update.py 继续后续步骤。
+    if "--if-stale" in sys.argv:
+        last = _read_last_sync()
+        if last is not None:
+            elapsed = t_start - last
+            if elapsed < MIN_SYNC_INTERVAL:
+                mins = int((MIN_SYNC_INTERVAL - elapsed) / 60)
+                print(f"  距上次成功同步仅 {int(elapsed / 60)} 分钟，未满 1 小时，"
+                      f"跳过本次同步（约 {mins} 分钟后可再同步）")
+                return
+
     con = db.connect()
     pro = ts.pro_api(TUSHARE_TOKEN)
 
     print("拉取全市场上市股票基础信息 ...")
-    df = fetch_stock_basic(pro)
+    try:
+        df = fetch_stock_basic(pro)
+    except Exception as e:
+        # Tushare 限流（1次/小时）不视为错误：打印提示并跳过，不影响后续行情更新
+        if "频率超限" in str(e) or "每分钟" in str(e) or "每小时" in str(e):
+            print(f"  Tushare 接口限流，本次跳过同步：{e}")
+            con.close()
+            return
+        raise
     print(f"  获取 {len(df)} 只上市股票")
 
     # 变更前记录代码总数，用于事后核对 code 列未被破坏
@@ -141,6 +181,9 @@ def run():
         print("   ", r)
 
     con.close()
+
+    # 记录本次成功同步时间，供 --if-stale 判断间隔
+    _write_last_sync(t_start)
     print(f"完成，耗时 {time.time() - t_start:.1f}s")
 
 

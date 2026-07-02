@@ -1,6 +1,10 @@
 # 数据库文件
 stock.db
 stock
+stock.db.bak*
+
+# 运行状态（sync_stock_basic 的上次同步时间戳）
+.stock_basic_last_sync
 
 # Python
 __pycache__/

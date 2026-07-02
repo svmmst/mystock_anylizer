@@ -8,24 +8,33 @@
 python daily_update.py
 ```
 
-该脚本按顺序串联执行以下三步（前两步任一失败则中止，不再执行后续）：
+该脚本按顺序串联执行以下三步：
 
 ```bash
-# 1. 增量更新日线数据（不复权，Tushare）
+# 1. 同步股票基础信息（名称/行业等，Tushare）——非关键步骤
+python sync_stock_basic.py --if-stale
+
+# 2. 增量更新日线数据（不复权，Tushare）——关键步骤
 python update_daily_price_v3.py
 
-# 2. 增量更新复权因子 + 重建前复权表（pytdx）
+# 3. 增量更新复权因子 + 重建前复权表（pytdx）——关键步骤
 python rebuild_factor_pytdx.py --update
-
-# 3. 同步股票基础信息（名称/行业等，Tushare）
-python sync_stock_basic.py
 ```
 
 也可单独手动执行上述各步。
 
-> 注：第 3 步与前两步无依赖，放在最后，即使失败也不影响核心的日线/因子更新。
-> `sync_stock_basic.py` 依赖 Tushare `stock_basic` 接口，该接口限 **1 次/小时**，
-> 一天多次运行 `daily_update.py` 时该步可能因限流报错，属正常现象，不影响行情与因子。
+**中断规则**：
+
+- 第 1 步为**非关键步骤**，失败或跳过都不中止，继续执行行情/因子更新
+  （行情本身不依赖 stock_basic，新股一上市当天就会进 daily_price）。
+- 第 2、3 步为**关键步骤**，有依赖关系（因子依赖日线），顺序不可颠倒，任一失败即中止。
+
+**为何把基础信息放最前**：让新上市股票的名称先就位，避免出现「daily_price 有行情但
+stock_basic 查不到名称」的窗口。
+
+**限流自保护**（`--if-stale`）：Tushare `stock_basic` 接口限 **1 次/小时**。脚本会用时间戳文件
+`.stock_basic_last_sync` 记录上次成功时间，距上次不足 1 小时则直接打印提示并跳过（退出码 0）。
+即便真的撞上限流，脚本也会捕获并以跳过处理，均不影响后续行情与因子更新。
 
 ---
 
@@ -59,7 +68,7 @@ python sync_stock_basic.py
 
 | 脚本 | 用途 | 数据源 | 耗时 |
 |------|------|--------|------|
-| `sync_stock_basic.py` | 同步全市场基础信息（名称/行业/市场/上市日期等），补充到 stock_basic 表 | Tushare Pro | 几秒（接口限1次/小时） |
+| `sync_stock_basic.py` | 同步全市场基础信息（名称/行业/市场/上市日期等），补充到 stock_basic 表；`--if-stale` 距上次成功不足 1 小时则跳过 | Tushare Pro | 几秒（接口限1次/小时） |
 | `classify_stock_basic.py` | 给 stock_basic 打 type 标签（个股/指数），规则同 market_regime.py | 本地SQL | <1秒 |
 | `prune_stock_basic.py` | 清理空壳代码（无名称且两张行情表均无数据），`--dry-run` 只统计不删 | 本地SQL | <1秒 |
 
