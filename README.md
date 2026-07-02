@@ -18,17 +18,19 @@ pip install -r requirements.txt
 python daily_update.py
 ```
 
-该命令按顺序串联五步:
+该命令按顺序串联六步:
 
 1. **同步指数基础信息**(Tushare index_basic)—— 非关键步骤,失败/跳过不影响后续
 2. **同步股票基础信息**(名称/行业等,Tushare)—— 非关键步骤,失败/跳过不影响后续
 3. **增量更新日线数据**(不复权,Tushare)—— 关键步骤
 4. **增量更新复权因子 + 重建前复权表**(pytdx)—— 关键步骤
 5. **增量更新指数行情**(pytdx)—— 非关键步骤
+6. **交叉验证指数行情**(与 baostock 对比)—— 非关键步骤
 
 前两步带 1 小时限流自保护(Tushare index_basic / stock_basic 接口各限 1 次/小时,
 用独立时间戳文件),距上次成功不足 1 小时会自动跳过。第 3、4 步有依赖关系(因子依赖日线),
 任一失败即中止。第 5 步用 pytdx(无限流)更新指数行情,与个股链无依赖,失败可次日补。
+第 6 步每次更新后自动与 baostock 交叉验证指数数据,防脏数据误导择时/回测。
 
 ## 数据源
 
@@ -67,6 +69,7 @@ Tushare token 配置在 `common/config.py` 的 `TUSHARE_TOKEN`。
 | `sync_stock_basic.py` | 同步个股基础信息(名称/行业等,Tushare) |
 | `sync_index_basic.py` | 同步指数基础信息到 index_basic 表(Tushare) |
 | `sync_index_daily.py` | 同步指数行情到 index_daily_price 表(pytdx,无限流) |
+| `verify_index_baostock.py` | 与 baostock 交叉验证指数行情(每次更新后自动体检) |
 | `sync_financials_by_quarter.py` | 季度财务数据同步 |
 | `tech_screen.py` / `daily_pick.py` | 技术选股 / 每日选股 |
 | `backtest_strategy.py` / `market_regime.py` | 回测策略 / 市场状态判断 |

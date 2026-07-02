@@ -8,7 +8,7 @@
 python daily_update.py
 ```
 
-该脚本按顺序串联执行以下五步：
+该脚本按顺序串联执行以下六步：
 
 ```bash
 # 1. 同步指数基础信息（Tushare index_basic）——非关键步骤
@@ -25,6 +25,9 @@ python rebuild_factor_pytdx.py --update
 
 # 5. 增量更新指数行情（pytdx）——非关键步骤
 python sync_index_daily.py
+
+# 6. 交叉验证指数行情（与 baostock 对比）——非关键步骤
+python verify_index_baostock.py
 ```
 
 也可单独手动执行上述各步。
@@ -36,6 +39,8 @@ python sync_index_daily.py
 - 第 3、4 步为**关键步骤**，有依赖关系（因子依赖日线），顺序不可颠倒，任一失败即中止。
 - 第 5 步更新指数行情（pytdx 无限流），与个股因子链无依赖，**非关键**：指数只服务
   择时，失败可次日补，不应中断个股主链。
+- 第 6 步交叉验证指数行情（与 baostock 抽样对比），**非关键**：指数数据重要，每次更新后
+  自动体检防脏数据误导。验证失败只告警不中断（更新已完成），需人工核查。
 
 **为何把基础信息放最前**：让新代码信息先就位，避免出现「daily_price 有行情但
 基础信息表查不到名称」的窗口。
@@ -117,6 +122,7 @@ python sync_index_daily.py
 |------|------|
 | `verify_qfq.py` | 验证前复权数据质量 |
 | `verify_qfq_baostock.py` | 与 Baostock 对比验证前复权准确性 |
+| `verify_index_baostock.py` | 与 Baostock 交叉验证指数行情（index_daily_price），`--full` 深度核对；daily_update 第 6 步自动调用 |
 | `fix_factor_anomaly.py` | 修复因子异常 |
 
 ---
