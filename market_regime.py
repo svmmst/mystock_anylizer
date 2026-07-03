@@ -30,10 +30,17 @@ import pandas as pd
 
 DB_PATH = "/Users/sunxibao/projects/mystock_anylizer/stock.db"
 
-# 指数代码
-INDEX_SZCI = "sz.399001"  # 深证成指
-INDEX_SZ100 = "sz.399106"  # 深证综合（实际为深证100R）
-INDEX_GEM = "sz.399006"   # 创业板指（已修正为正确代码 399006，数据自 2010 年起）
+# 指数代码 → 中文名（集中映射，替代散落的行内注释）
+INDEX_SZCI = "sz.399001"   # 深证成指
+INDEX_GEM = "sz.399006"    # 创业板指（正确代码 399006，数据自 2010 年起）
+INDEX_HS300 = "sh.000300"  # 沪深300（大盘蓝筹，上证官方真身，数据自 2005 年）
+INDEX_ZZ500 = "sh.000905"  # 中证500（中盘，上证官方真身，数据自 2007 年）
+INDEX_NAMES = {
+    INDEX_SZCI: "深证成指",
+    INDEX_GEM: "创业板指",
+    INDEX_HS300: "沪深300",
+    INDEX_ZZ500: "中证500",
+}
 
 REGIME_MAP = {
     "STRONG_BULL": {"cn": "强势上升", "max_pos": 90},
@@ -79,11 +86,12 @@ def calc_ma(close: np.ndarray, period: int):
 def score_index_trend(con, end_date: str) -> dict:
     """
     维度一：指数趋势评分 (0-100)
-    综合深证成指和创业板指的MACD+均线状态
+    综合深证成指、创业板指、沪深300 的 MACD+均线状态
+    （纳入沪深300 代表大盘蓝筹，趋势不再只看深市成长股）
     """
     scores = []
 
-    for code in [INDEX_SZCI, INDEX_GEM]:
+    for code in [INDEX_SZCI, INDEX_GEM, INDEX_HS300]:
         df = load_index_data(con, code, end_date, 60)
         if len(df) < 30:
             continue
@@ -239,13 +247,25 @@ def score_market_breadth(con, end_date: str) -> dict:
 def score_volume_trend(con, end_date: str) -> dict:
     """
     维度三：量能趋势评分 (0-100)
-    指数成交额 vs 5日/20日均量
+    沪深两市成交额（深证成指 + 沪深300 按日相加）vs 5日/20日均量。
+    纳入沪深300 量能，避免只看深市量能在“沪强深弱”时失真；
+    量价配合仍以深证成指价格为准（口径单一）。
     """
     df = load_index_data(con, INDEX_SZCI, end_date, 25)
+    hs300 = load_index_data(con, INDEX_HS300, end_date, 25)
     if len(df) < 20:
         return {"score": 50, "detail": "数据不足"}
 
-    amounts = df["amount"].values
+    # 合并沪深两市量能：以深证成指的交易日为基准，按日期左连接沪深300 成交额后相加。
+    # 沪深300 缺某日则该日只计深证成指量能（不因缺一市而漏判）。
+    merged = df[["date", "amount", "close"]].merge(
+        hs300[["date", "amount"]].rename(columns={"amount": "amount_hs300"}),
+        on="date", how="left",
+    )
+    merged["amount_hs300"] = merged["amount_hs300"].fillna(0)
+    combined_amount = (merged["amount"] + merged["amount_hs300"]).values
+
+    amounts = combined_amount
     latest_amount = amounts[-1]
     ma5_amount = np.mean(amounts[-5:])
     ma20_amount = np.mean(amounts[-20:])
@@ -293,33 +313,36 @@ def score_volume_trend(con, end_date: str) -> dict:
 def score_risk_appetite(con, end_date: str) -> dict:
     """
     维度四：风险偏好评分 (0-100)
-    创业板 vs 深证成指 的相对强弱
+    创业板 vs 沪深300 的相对强弱（成长 vs 价值）。
+    改用沪深300 而非深证成指做基准：创业板与深证成指相关性高达 0.96（同涨跌，
+    信号弱），与沪深300 相关性 0.91、分化更明显，才是有效的“成长强于价值→
+    风险偏好上升”信号。
     """
     gem_df = load_index_data(con, INDEX_GEM, end_date, 25)
-    szci_df = load_index_data(con, INDEX_SZCI, end_date, 25)
+    base_df = load_index_data(con, INDEX_HS300, end_date, 25)
 
-    if len(gem_df) < 20 or len(szci_df) < 20:
+    if len(gem_df) < 20 or len(base_df) < 20:
         return {"score": 50, "detail": "数据不足"}
 
     # 近5日相对强弱
     gem_5d_chg = gem_df["close"].values[-1] / gem_df["close"].values[-5] - 1
-    szci_5d_chg = szci_df["close"].values[-1] / szci_df["close"].values[-5] - 1
-    relative_5d = gem_5d_chg - szci_5d_chg
+    base_5d_chg = base_df["close"].values[-1] / base_df["close"].values[-5] - 1
+    relative_5d = gem_5d_chg - base_5d_chg
 
     # 近20日相对强弱
     gem_20d_chg = gem_df["close"].values[-1] / gem_df["close"].values[-20] - 1
-    szci_20d_chg = szci_df["close"].values[-1] / szci_df["close"].values[-20] - 1
-    relative_20d = gem_20d_chg - szci_20d_chg
+    base_20d_chg = base_df["close"].values[-1] / base_df["close"].values[-20] - 1
+    relative_20d = gem_20d_chg - base_20d_chg
 
     score = 50
 
     # 短期相对强弱 (+/- 20分)
     if relative_5d > 0.02:
-        score += 20  # 创业板明显强于主板，风险偏好高
+        score += 20  # 创业板明显强于沪深300，风险偏好高
     elif relative_5d > 0.005:
         score += 10
     elif relative_5d < -0.02:
-        score -= 20  # 创业板明显弱于主板，风险偏好低
+        score -= 20  # 创业板明显弱于沪深300，风险偏好低
     elif relative_5d < -0.005:
         score -= 10
 
@@ -334,7 +357,7 @@ def score_risk_appetite(con, end_date: str) -> dict:
         score -= 5
 
     score = max(0, min(100, score))
-    detail = f"创业板vs深证成指：5日{relative_5d*100:+.1f}%，20日{relative_20d*100:+.1f}%"
+    detail = f"创业板vs沪深300：5日{relative_5d*100:+.1f}%，20日{relative_20d*100:+.1f}%"
     return {"score": score, "detail": detail}
 
 

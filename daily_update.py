@@ -24,17 +24,19 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent
 
 # 按顺序执行的步骤：(描述, [命令参数], 是否关键步骤)
-# - 前两步同步基础信息（指数、个股）放最前，保证新代码信息先就位（行情本身不依赖它们）；
-#   均标记为非关键（critical=False）：失败或跳过都不中止，继续后面的行情/因子更新。
-#   均带 --if-stale：距上次成功同步不足 1 小时则自动跳过，避免撞 Tushare 1次/小时限流。
-#   指数与个股各用独立时间戳文件，互不影响。
+# - 第一步同步个股基础信息放最前，保证新代码信息先就位（行情本身不依赖它）；
+#   标记为非关键（critical=False）：失败或跳过都不中止，继续后面的行情/因子更新。
+#   带 --if-stale：距上次成功同步不足 1 小时则自动跳过，避免撞 Tushare 1次/小时限流。
 # - 中间两步是核心行情+因子，有依赖关系（因子依赖日线），顺序不可颠倒，任一失败即中止。
 # - 更新指数行情（pytdx，无限流），与个股因子链无依赖，非关键：
 #   指数只服务择时，失败可次日补，不应中断个股主链。
 # - 最后一步交叉验证指数行情（与 baostock 对比），非关键：指数数据重要，每次更新后
 #   自动体检防脏数据误导；验证失败只告警不中断（更新已完成，需人工核查后处理）。
+#
+# 注：指数基础信息（index_basic）不再进日常链——指数集合几乎不变，无每日同步的意义。
+#   index_basic 现作为「指数同步清单」的权威源，由 seed_index_basic.py 一次性铺底，
+#   需增删指数时手动重跑该脚本即可。sync_index_daily.py 的清单以 index_basic 为准。
 STEPS = [
-    ("同步指数基础信息（Tushare index_basic）", ["sync_index_basic.py", "--if-stale"], False),
     ("同步股票基础信息（名称/行业等，Tushare）", ["sync_stock_basic.py", "--if-stale"], False),
     ("增量更新日线数据（Tushare）", ["update_daily_price_v3.py"], True),
     ("增量更新复权因子 + 重建前复权表（pytdx）", ["rebuild_factor_pytdx.py", "--update"], True),

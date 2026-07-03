@@ -25,9 +25,10 @@ import pandas as pd
 
 DB_PATH = "/Users/sunxibao/projects/mystock_anylizer/stock.db"
 
-# 指数代码
-INDEX_SZCI = "sz.399001"  # 深证成指
-INDEX_GEM = "sz.399003"   # 创业板指
+# 指数代码（与 market_regime.py 保持一致的择时指数集合）
+INDEX_SZCI = "sz.399001"   # 深证成指
+INDEX_GEM = "sz.399006"    # 创业板指（修正：原 sz.399003 是老指数非创业板，创业板正确代码为 399006）
+INDEX_HS300 = "sh.000300"  # 沪深300（大盘蓝筹，上证官方真身）
 
 # 回测参数
 MAX_POSITIONS = 5          # 最大持仓数
@@ -312,6 +313,15 @@ def build_regime_cache(con, start_date: str, end_date: str) -> dict:
           end_date]).fetchdf()
     gem["date"] = pd.to_datetime(gem["date"])
 
+    # 加载沪深300（纳入大盘蓝筹，趋势不再只看深市成长股）
+    hs300 = con.execute("""
+        SELECT date, close FROM index_daily_price
+        WHERE code = ? AND date >= ? AND date <= ?
+        ORDER BY date
+    """, [INDEX_HS300, (pd.to_datetime(start_date) - timedelta(days=90)).strftime("%Y-%m-%d"),
+          end_date]).fetchdf()
+    hs300["date"] = pd.to_datetime(hs300["date"])
+
     # 全市场涨跌家数
     breadth = con.execute("""
         SELECT date,
@@ -357,6 +367,18 @@ def build_regime_cache(con, start_date: str, end_date: str) -> dict:
     gem["ma10"] = gem_ma10
     gem["ma20"] = gem_ma20
 
+    # 沪深300 指标
+    hs_close = hs300["close"].values
+    hs_ema12 = pd.Series(hs_close).ewm(span=12, adjust=False).mean().values
+    hs_ema26 = pd.Series(hs_close).ewm(span=26, adjust=False).mean().values
+    hs_dif = hs_ema12 - hs_ema26
+    hs_dea = pd.Series(hs_dif).ewm(span=9, adjust=False).mean().values
+    hs300["dif"] = hs_dif
+    hs300["dea"] = hs_dea
+    hs300["ma5"] = pd.Series(hs_close).rolling(5).mean().values
+    hs300["ma10"] = pd.Series(hs_close).rolling(10).mean().values
+    hs300["ma20"] = pd.Series(hs_close).rolling(20).mean().values
+
     regime_cache = {}
     start_dt = pd.to_datetime(start_date)
 
@@ -367,9 +389,9 @@ def build_regime_cache(con, start_date: str, end_date: str) -> dict:
 
         date_str = str(d)[:10]
 
-        # 指数趋势评分
+        # 指数趋势评分（深证成指 + 创业板指 + 沪深300 三者均值）
         trend_scores = []
-        for idx_df in [szci, gem]:
+        for idx_df in [szci, gem, hs300]:
             mask = idx_df["date"] <= d
             sub = idx_df[mask]
             if len(sub) < 30:

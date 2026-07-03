@@ -8,25 +8,22 @@
 python daily_update.py
 ```
 
-该脚本按顺序串联执行以下六步：
+该脚本按顺序串联执行以下五步：
 
 ```bash
-# 1. 同步指数基础信息（Tushare index_basic）——非关键步骤
-python sync_index_basic.py --if-stale
-
-# 2. 同步股票基础信息（名称/行业等，Tushare）——非关键步骤
+# 1. 同步股票基础信息（名称/行业等，Tushare）——非关键步骤
 python sync_stock_basic.py --if-stale
 
-# 3. 增量更新日线数据（不复权，Tushare）——关键步骤
+# 2. 增量更新日线数据（不复权，Tushare）——关键步骤
 python update_daily_price_v3.py
 
-# 4. 增量更新复权因子 + 重建前复权表（pytdx）——关键步骤
+# 3. 增量更新复权因子 + 重建前复权表（pytdx）——关键步骤
 python rebuild_factor_pytdx.py --update
 
-# 5. 增量更新指数行情（pytdx）——非关键步骤
+# 4. 增量更新指数行情（pytdx）——非关键步骤
 python sync_index_daily.py
 
-# 6. 交叉验证指数行情（与 baostock 对比）——非关键步骤
+# 5. 交叉验证指数行情（与 baostock 对比）——非关键步骤
 python verify_index_baostock.py
 ```
 
@@ -34,21 +31,25 @@ python verify_index_baostock.py
 
 **中断规则**：
 
-- 第 1、2 步为**非关键步骤**，失败或跳过都不中止，继续执行行情/因子更新
-  （行情本身不依赖 index_basic / stock_basic，新股一上市当天就会进 daily_price）。
-- 第 3、4 步为**关键步骤**，有依赖关系（因子依赖日线），顺序不可颠倒，任一失败即中止。
-- 第 5 步更新指数行情（pytdx 无限流），与个股因子链无依赖，**非关键**：指数只服务
+- 第 1 步为**非关键步骤**，失败或跳过都不中止，继续执行行情/因子更新
+  （行情本身不依赖 stock_basic，新股一上市当天就会进 daily_price）。
+- 第 2、3 步为**关键步骤**，有依赖关系（因子依赖日线），顺序不可颠倒，任一失败即中止。
+- 第 4 步更新指数行情（pytdx 无限流），与个股因子链无依赖，**非关键**：指数只服务
   择时，失败可次日补，不应中断个股主链。
-- 第 6 步交叉验证指数行情（与 baostock 抽样对比），**非关键**：指数数据重要，每次更新后
+- 第 5 步交叉验证指数行情（与 baostock 抽样对比），**非关键**：指数数据重要，每次更新后
   自动体检防脏数据误导。验证失败只告警不中断（更新已完成），需人工核查。
 
-**为何把基础信息放最前**：让新代码信息先就位，避免出现「daily_price 有行情但
-基础信息表查不到名称」的窗口。
+**指数基础信息（index_basic）不进日常链**：指数集合几乎不变，无每日同步的意义（还受
+Tushare 1次/小时限流）。index_basic 现作为**「指数同步清单」的权威源**，由
+`seed_index_basic.py` 一次性铺底（286 深市指数名称来自 pytdx + 8 个上证宏基指数硬编码），
+需增删指数时手动重跑该脚本。`sync_index_daily.py` 的指数清单以 index_basic 为准。
 
-**限流自保护**（`--if-stale`）：Tushare `index_basic` / `stock_basic` 接口均限 **1 次/小时**。
-两个脚本各用独立时间戳文件（`.index_basic_last_sync` / `.stock_basic_last_sync`）记录上次成功时间，
-距上次不足 1 小时则直接打印提示并跳过（退出码 0）。即便真撞上限流，脚本也会捕获并以跳过处理，
-均不影响后续行情与因子更新。
+**为何把个股基础信息放最前**：让新代码信息先就位，避免出现「daily_price 有行情但
+stock_basic 查不到名称」的窗口。
+
+**限流自保护**（`--if-stale`）：Tushare `stock_basic` 接口限 **1 次/小时**。脚本用时间戳文件
+（`.stock_basic_last_sync`）记录上次成功时间，距上次不足 1 小时则直接打印提示并跳过（退出码 0）。
+即便真撞上限流，脚本也会捕获并以跳过处理，不影响后续行情与因子更新。
 
 ---
 
@@ -85,8 +86,9 @@ python verify_index_baostock.py
 | 脚本 | 用途 | 数据源 | 耗时 |
 |------|------|--------|------|
 | `sync_stock_basic.py` | 同步全市场**个股**基础信息到 stock_basic 表；`--if-stale` 距上次成功不足 1 小时则跳过 | Tushare Pro | 几秒（接口限1次/小时） |
-| `sync_index_basic.py` | 同步**指数基础信息**（名称/全称/发布方/类别等）到 index_basic 表，全量刷新；`--if-stale` 用独立时间戳文件 | Tushare Pro | 几秒（接口限1次/小时） |
-| `sync_index_daily.py` | 同步**指数行情**到 index_daily_price 表（含涨跌家数）；默认增量，`--full` 全量翻页重灌 | pytdx（通达信） | 增量秒级，全量约12分钟 |
+| `seed_index_basic.py` | **推荐** 一次性铺底 index_basic（指数同步清单权威源）：286 深市指数名称从 pytdx 拉取 + 8 个上证宏基指数硬编码，只填 code/name/ts_code；`--dry-run` 只统计不写 | pytdx（通达信） | <1秒 |
+| `sync_index_basic.py` | 备用：从 Tushare 同步指数基础信息到 index_basic（全字段）。**不进日常链**（指数集合稳定，无每日同步意义，且受限流） | Tushare Pro | 几秒（接口限1次/小时） |
+| `sync_index_daily.py` | 同步**指数行情**到 index_daily_price 表（含涨跌家数）；清单以 index_basic 为准；默认增量，`--full` 全量翻页重灌 | pytdx（通达信） | 增量秒级，全量约12分钟 |
 | `classify_stock_basic.py` | 给 stock_basic 打 type 标签（个股/指数），index 规则现仅作兜底护栏 | 本地SQL | <1秒 |
 | `prune_stock_basic.py` | 清理空壳代码（无名称且两张行情表均无数据），`--dry-run` 只统计不删 | 本地SQL | <1秒 |
 | `prune_index_from_stock_basic.py` | 一次性迁移：从 stock_basic 剔除指数（`type='index'`），不动行情表 | 本地SQL | <1秒 |
@@ -98,6 +100,25 @@ python verify_index_baostock.py
 >   `market_regime.py` / `daily_pick.py` / `backtest_*` 均已改为从 index_daily_price 读指数。
 > - 指数不分红不除权，**无复权概念**（因子恒为 1.0），故指数行情不进因子/前复权流程。
 > - `market_regime.py` 的创业板指已由旧代码 sz.399003 修正为正确的 **sz.399006**（数据自 2010 年起）。
+>   `backtest_with_regime.py` / `backtest_dynamic.py` 曾遗留同一处 sz.399003 错误（老指数非创业板），
+>   已一并修正为 sz.399006，三处择时逻辑现使用一致的指数集合。
+
+**择时指数代码 ↔ 中文名对照**（`market_regime.py` / `backtest_*` 统一使用）：
+
+| 代码 | 中文名 | 说明 |
+|------|--------|------|
+| `sz.399001` | 深证成指 | 深市综合，趋势/量能维度 |
+| `sz.399006` | 创业板指 | 成长风格代表，数据自 2010 年 |
+| `sh.000300` | 沪深300 | 大盘蓝筹（上证官方真身），趋势/量能/风险偏好维度，数据自 2005 年 |
+| `sh.000905` | 中证500 | 中盘（上证官方真身），数据自 2007 年 |
+
+> - **风险偏好维度**（`market_regime.py`）由「创业板 vs 深证成指」改为「创业板 vs 沪深300」：
+>   前者相关性高达 0.96（同涨跌、信号弱），后者 0.91、分化明显，才是有效的「成长 vs 价值」信号。
+> - **趋势/量能维度**已纳入沪深300，使市场判断覆盖大盘蓝筹，不再只看深市成长股。
+> - 择时已由**深市镜像码升级为上证官方真身**（沪深300 sz.399300→sh.000300、中证500 sz.399905→sh.000905）。
+>   8 个上证宏基指数（含上证综指/上证50/中证1000/科创50 等）已补入 `index_daily_price`，
+>   由 `seed_index_basic.py` 纳入 index_basic 清单、每日自动跟新。深市镜像 sz.399300/sz.399905 行情
+>   保留在表里（不删），但不再用于择时。
 
 ### 财务数据
 

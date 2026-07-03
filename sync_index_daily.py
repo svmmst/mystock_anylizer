@@ -20,6 +20,7 @@
 
 import sys
 import time
+from datetime import datetime, time as dtime
 
 import pandas as pd
 
@@ -33,22 +34,50 @@ VOL_MULTIPLIER = 10000
 PAGE_SIZE = 800
 # 指数日线的 category 参数
 CATEGORY_DAY = 9
+# A 股交易时段（含集合竞价），用于判断“当前是否盘中”
+TRADE_START = dtime(9, 15)
+TRADE_END = dtime(15, 0)
+
+
+def _is_intraday(now=None):
+    """判断当前是否处于 A 股交易时段（工作日 09:15–15:00）。
+
+    盘中 pytdx 返回的“当天 K 线”close 是实时价、非真实收盘，volume/amount 也不完整，
+    误入库后会被主键去重永久固化（盘后不再覆盖），故盘中默认跳过写当天数据。
+    """
+    now = now or datetime.now()
+    if now.weekday() >= 5:  # 周六日非交易日
+        return False
+    return TRADE_START <= now.time() <= TRADE_END
 
 
 def get_index_codes(con):
     """获取待同步的指数代码清单。
 
-    优先取 index_basic 表；为空则回退到 daily_price 中的 sz.399 存量，
-    保证即便 index_basic 尚未补全也能全量建表。
+    来源优先级（依次回退，取到非空即用）：
+      1. index_basic 表（若已用 Tushare 补全，最全）
+      2. index_daily_price 表自身已有的指数（日常增量的主来源，自我维持、最可靠）
+      3. daily_price 中的 sz.399 存量（历史遗留兜底；指数已从 daily_price 剔除后此源为空）
+
+    说明：指数已从 daily_price 剥离，故来源 3 通常为空；日常增量依赖来源 2 自给自足，
+    不再依赖任何外部表。首次全量建表（表还空）时，若前两者都空，靠来源 3 或需手动指定。
     """
     codes = con.execute("SELECT code FROM index_basic").fetchdf()["code"].tolist()
     if codes:
         print(f"  指数清单来源: index_basic 表（{len(codes)} 个）")
         return codes
+
+    codes = con.execute(
+        "SELECT DISTINCT code FROM index_daily_price ORDER BY code"
+    ).fetchdf()["code"].tolist()
+    if codes:
+        print(f"  指数清单来源: index_daily_price 已有指数（{len(codes)} 个，自我维持）")
+        return codes
+
     codes = con.execute(
         "SELECT DISTINCT code FROM daily_price WHERE code LIKE 'sz.399%' ORDER BY code"
     ).fetchdf()["code"].tolist()
-    print(f"  指数清单来源: daily_price 存量回退（{len(codes)} 个，index_basic 为空）")
+    print(f"  指数清单来源: daily_price 存量兜底（{len(codes)} 个）")
     return codes
 
 
@@ -93,8 +122,23 @@ def _fetch_recent(api, market, stock_code):
 
 def run():
     full = "--full" in sys.argv
+    # 盘中保护：默认跳过写入“当天日期”的行（避免固化盘中快照）；--allow-intraday 可绕过
+    allow_intraday = "--allow-intraday" in sys.argv
     t_start = time.time()
     print(f"指数日线行情同步（pytdx）{'[全量]' if full else '[增量]'}")
+
+    # 盘中运行时，除非显式 --allow-intraday，否则丢弃“今天”这一行，只写历史。
+    # 盘后（15:00 后）跑同一命令即可正常补当天真实收盘。
+    now = datetime.now()
+    skip_today = _is_intraday(now) and not allow_intraday
+    today = now.date()
+    if _is_intraday(now):
+        if skip_today:
+            print(f"  ⚠️ 当前为交易时段（{now:%H:%M}），当天({today})数据为盘中快照、非真实收盘，"
+                  f"本次将跳过写入当天数据（历史照常更新）。盘后 15:00 后再跑可补当天收盘。")
+            print("     如确需写入当天（例如仅补历史、不在意当天），加 --allow-intraday。")
+        else:
+            print(f"  ⚠️ 当前为交易时段但已指定 --allow-intraday，将写入当天({today})盘中快照。")
 
     con = db.connect()
     db.init_index_daily_price(con)
@@ -143,6 +187,10 @@ def run():
         # 增量：只保留比库里最新日期更新的行
         if not full and code in last_dates and last_dates[code] is not None:
             df = df[df["date"] > last_dates[code]]
+
+        # 盘中保护：丢弃“当天”这一行（盘中快照非真实收盘），对全量/增量均生效
+        if skip_today:
+            df = df[df["date"] < today]
 
         if df.empty:
             continue
