@@ -9,10 +9,17 @@ from .config import SLEEP_SEC, RETRY
 # 连接
 # ======================================================================
 def login():
-    lg = bs.login()
-    if lg.error_code != '0':
-        raise Exception(f"baostock 登录失败: {lg.error_msg}")
-    return lg
+    for attempt in range(RETRY):
+        lg = bs.login()
+        if lg.error_code == '0':
+            return lg
+        # 登录失败，先登出再重试
+        bs.logout()
+        if attempt < RETRY - 1:
+            wait = 2 ** attempt
+            print(f"baostock 登录失败({lg.error_msg})，{wait}秒后第{attempt+2}次尝试...")
+            time.sleep(wait)
+    raise Exception(f"baostock 登录失败（重试{RETRY}次后仍失败）: {lg.error_msg}")
 
 
 def logout():
@@ -23,11 +30,18 @@ def logout():
 # 股票列表
 # ======================================================================
 def get_all_a_codes():
-    """在线获取全A股代码（当日有效）"""
-    rs = bs.query_all_stock(day=datetime.now().strftime("%Y-%m-%d"))
+    """在线获取全A股代码（用最近一个有数据的交易日）"""
+    from datetime import timedelta
+    # query_all_stock 只对已收盘的交易日有效，往前最多找7天
     data = []
-    while rs.error_code == '0' and rs.next():
-        data.append(rs.get_row_data())
+    for delta in range(1, 8):
+        day = (datetime.now() - timedelta(days=delta)).strftime("%Y-%m-%d")
+        rs = bs.query_all_stock(day=day)
+        data = []
+        while rs.error_code == '0' and rs.next():
+            data.append(rs.get_row_data())
+        if data:
+            break
     df = pd.DataFrame(data, columns=rs.fields)
     df = df[df["code"].str.startswith(("sh.6", "sz.0", "sz.3"))]
     return df["code"].tolist()

@@ -90,11 +90,16 @@ def score_index_trend(con, end_date: str) -> dict:
     （纳入沪深300 代表大盘蓝筹，趋势不再只看深市成长股）
     """
     scores = []
+    actual_date = None  # 记录实际取到的最新数据日期（用于数据日期校验）
 
     for code in [INDEX_SZCI, INDEX_GEM, INDEX_HS300]:
         df = load_index_data(con, code, end_date, 60)
         if len(df) < 30:
             continue
+
+        # 各指数最新日期应一致，取其一即可
+        if actual_date is None:
+            actual_date = str(df["date"].iloc[-1])[:10]
 
         close = df["close"].values
         dif, dea = calc_macd(close)
@@ -140,7 +145,7 @@ def score_index_trend(con, end_date: str) -> dict:
         scores.append(max(0, min(100, score)))
 
     if not scores:
-        return {"score": 50, "detail": "数据不足"}
+        return {"score": 50, "detail": "数据不足", "actual_date": actual_date}
 
     final_score = int(np.mean(scores))
 
@@ -152,7 +157,7 @@ def score_index_trend(con, end_date: str) -> dict:
     else:
         detail_parts.append("指数趋势中性")
 
-    return {"score": final_score, "detail": "，".join(detail_parts)}
+    return {"score": final_score, "detail": "，".join(detail_parts), "actual_date": actual_date}
 
 
 def score_market_breadth(con, end_date: str) -> dict:
@@ -179,10 +184,11 @@ def score_market_breadth(con, end_date: str) -> dict:
     """, [end_date, (pd.to_datetime(end_date) - timedelta(days=15)).strftime("%Y-%m-%d")]).fetchdf()
 
     if breadth_df.empty:
-        return {"score": 50, "detail": "数据不足"}
+        return {"score": 50, "detail": "数据不足", "actual_date": None}
 
     # 当天数据
     today = breadth_df.iloc[0]
+    actual_date = str(today["date"])[:10]  # 实际取到的最新交易日（个股表基准）
     up = today["up_count"]
     down = today["down_count"]
     limit_up = today["limit_up"]
@@ -241,6 +247,7 @@ def score_market_breadth(con, end_date: str) -> dict:
     detail = f"涨{int(up)}/跌{int(down)}(比{ratio:.1f}:1)，涨停{int(limit_up)}/跌停{int(limit_down)}"
     return {"score": score, "detail": detail, "up": int(up), "down": int(down),
             "limit_up": int(limit_up), "limit_down": int(limit_down),
+            "actual_date": actual_date,
             "breadth_improving": len(breadth_df) >= 3 and recent_ratios[0] > recent_ratios[1] > recent_ratios[2]}
 
 
@@ -254,7 +261,9 @@ def score_volume_trend(con, end_date: str) -> dict:
     df = load_index_data(con, INDEX_SZCI, end_date, 25)
     hs300 = load_index_data(con, INDEX_HS300, end_date, 25)
     if len(df) < 20:
-        return {"score": 50, "detail": "数据不足"}
+        return {"score": 50, "detail": "数据不足", "actual_date": None}
+
+    actual_date = str(df["date"].iloc[-1])[:10]  # 深证成指最新日期
 
     # 合并沪深两市量能：以深证成指的交易日为基准，按日期左连接沪深300 成交额后相加。
     # 沪深300 缺某日则该日只计深证成指量能（不因缺一市而漏判）。
@@ -307,7 +316,7 @@ def score_volume_trend(con, end_date: str) -> dict:
 
     score = max(0, min(100, score))
     detail = f"量比(vs5日){vol_ratio_5:.2f}，量能趋势(5/20){vol_ratio_20:.2f}"
-    return {"score": score, "detail": detail}
+    return {"score": score, "detail": detail, "actual_date": actual_date}
 
 
 def score_risk_appetite(con, end_date: str) -> dict:
@@ -322,7 +331,9 @@ def score_risk_appetite(con, end_date: str) -> dict:
     base_df = load_index_data(con, INDEX_HS300, end_date, 25)
 
     if len(gem_df) < 20 or len(base_df) < 20:
-        return {"score": 50, "detail": "数据不足"}
+        return {"score": 50, "detail": "数据不足", "actual_date": None}
+
+    actual_date = str(gem_df["date"].iloc[-1])[:10]  # 创业板指最新日期
 
     # 近5日相对强弱
     gem_5d_chg = gem_df["close"].values[-1] / gem_df["close"].values[-5] - 1
@@ -358,7 +369,7 @@ def score_risk_appetite(con, end_date: str) -> dict:
 
     score = max(0, min(100, score))
     detail = f"创业板vs沪深300：5日{relative_5d*100:+.1f}%，20日{relative_20d*100:+.1f}%"
-    return {"score": score, "detail": detail}
+    return {"score": score, "detail": detail, "actual_date": actual_date}
 
 
 def determine_regime(total_score: int, breadth_result: dict) -> str:
@@ -383,9 +394,12 @@ def run_regime(date_str: str = None, output_json: bool = False):
     """主入口"""
     con = duckdb.connect(DB_PATH, read_only=True)
 
-    # 确定日期
+    # 确定日期：默认取个股表与指数表两者最新日期的较小值，
+    # 确保默认跑时两表都有数据，从源头避免维度间日期不一致。
     if date_str is None:
-        max_date = con.execute("SELECT MAX(date) FROM daily_price_qfq").fetchone()[0]
+        stock_max = con.execute("SELECT MAX(date) FROM daily_price_qfq").fetchone()[0]
+        index_max = con.execute("SELECT MAX(date) FROM index_daily_price").fetchone()[0]
+        max_date = min(stock_max, index_max)
         date_str = str(max_date)[:10]
 
     # 四维评分
@@ -395,6 +409,31 @@ def run_regime(date_str: str = None, output_json: bool = False):
     risk = score_risk_appetite(con, date_str)
 
     con.close()
+
+    # ── 数据日期校验（防止请求日无数据时静默用旧行情冒充）──
+    # 基准日：以市场宽度（个股表）实际日期为准，代表全市场当天；无则取任一非空维度
+    breadth_date = breadth.get("actual_date")
+    index_date = trend.get("actual_date")
+    dim_dates = {
+        "市场宽度": breadth_date,
+        "指数趋势": index_date,
+        "量能": volume.get("actual_date"),
+        "风险偏好": risk.get("actual_date"),
+    }
+    non_null_dates = [d for d in dim_dates.values() if d]
+    data_date = breadth_date or (non_null_dates[0] if non_null_dates else date_str)
+
+    warnings = []
+    # ① 请求日无数据，回退到更早日
+    if data_date != date_str:
+        warnings.append(f"⚠️ 请求日期 {date_str} 无数据，实际基于 {data_date} 的行情计算")
+    # ② 维度间数据日期不一致（个股表与指数表未同步）
+    if breadth_date and index_date and breadth_date != index_date:
+        warnings.append(
+            f"⚠️ 维度间数据日期不一致：市场宽度={breadth_date}，指数趋势={index_date}"
+            f"（个股表与指数表可能未同步）"
+        )
+    data_warning = "；".join(warnings) if warnings else None
 
     # 加权综合
     total_score = int(
@@ -420,16 +459,19 @@ def run_regime(date_str: str = None, output_json: bool = False):
         suggestion = f"仓位上限{regime_info['max_pos']}%，全面做多但注意过热风险"
 
     result = {
-        "date": date_str,
+        "date": data_date,                 # 反映真实数据日期（回退时即为实际行情日）
+        "requested_date": date_str,        # 用户请求的日期
+        "data_date": data_date,            # 实际用于计算的行情日期
+        "data_warning": data_warning,      # 数据日期异常提醒（无异常为 None）
         "regime": regime,
         "regime_cn": regime_info["cn"],
         "score": total_score,
         "max_position_pct": regime_info["max_pos"],
         "dimensions": {
-            "index_trend": {"score": trend["score"], "weight": "35%", "detail": trend["detail"]},
-            "market_breadth": {"score": breadth["score"], "weight": "30%", "detail": breadth["detail"]},
-            "volume_trend": {"score": volume["score"], "weight": "20%", "detail": volume["detail"]},
-            "risk_appetite": {"score": risk["score"], "weight": "15%", "detail": risk["detail"]},
+            "index_trend": {"score": trend["score"], "weight": "35%", "detail": trend["detail"], "actual_date": trend.get("actual_date")},
+            "market_breadth": {"score": breadth["score"], "weight": "30%", "detail": breadth["detail"], "actual_date": breadth.get("actual_date")},
+            "volume_trend": {"score": volume["score"], "weight": "20%", "detail": volume["detail"], "actual_date": volume.get("actual_date")},
+            "risk_appetite": {"score": risk["score"], "weight": "15%", "detail": risk["detail"], "actual_date": risk.get("actual_date")},
         },
         "suggestion": suggestion,
     }
@@ -445,8 +487,14 @@ def run_regime(date_str: str = None, output_json: bool = False):
 def print_report(r: dict):
     """打印文本格式报告"""
     print(f"\n{'='*50}")
-    print(f"  市场状态报告 — {r['date']}")
+    print(f"  市场状态报告 — {r['data_date']}")
     print(f"{'='*50}")
+    # 数据日期异常时醒目提醒
+    if r.get("data_warning"):
+        print(f"\n  {'!'*40}")
+        for line in r["data_warning"].split("；"):
+            print(f"  {line}")
+        print(f"  {'!'*40}")
     print(f"\n  综合评分：{r['score']} / 100")
     print(f"  市场状态：{r['regime']}（{r['regime_cn']}）")
     print(f"  仓位上限：{r['max_position_pct']}%")
