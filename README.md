@@ -18,19 +18,22 @@ pip install -r requirements.txt
 python daily_update.py
 ```
 
-该命令按顺序串联六步:
+该命令按顺序串联五步:
 
-1. **同步指数基础信息**(Tushare index_basic)—— 非关键步骤,失败/跳过不影响后续
-2. **同步股票基础信息**(名称/行业等,Tushare)—— 非关键步骤,失败/跳过不影响后续
-3. **增量更新日线数据**(不复权,Tushare)—— 关键步骤
-4. **增量更新复权因子 + 重建前复权表**(pytdx)—— 关键步骤
-5. **增量更新指数行情**(pytdx)—— 非关键步骤
-6. **交叉验证指数行情**(与 baostock 对比)—— 非关键步骤
+1. **同步股票基础信息**(名称/行业等,Tushare)—— 非关键步骤,失败/跳过不影响后续
+2. **增量更新日线数据**(不复权,Tushare)—— 关键步骤
+3. **增量更新复权因子 + 重建前复权表**(pytdx)—— 关键步骤
+4. **增量更新指数行情**(pytdx)—— 非关键步骤
+5. **交叉验证指数行情**(与 baostock 对比)—— 非关键步骤
 
-前两步带 1 小时限流自保护(Tushare index_basic / stock_basic 接口各限 1 次/小时,
-用独立时间戳文件),距上次成功不足 1 小时会自动跳过。第 3、4 步有依赖关系(因子依赖日线),
-任一失败即中止。第 5 步用 pytdx(无限流)更新指数行情,与个股链无依赖,失败可次日补。
-第 6 步每次更新后自动与 baostock 交叉验证指数数据,防脏数据误导择时/回测。
+第 1 步带 1 小时限流自保护(Tushare stock_basic 接口限 1 次/小时,用时间戳文件),
+距上次成功不足 1 小时会自动跳过。第 2、3 步有依赖关系(因子依赖日线),任一失败即中止。
+第 4 步用 pytdx(无限流)更新指数行情,与个股链无依赖,失败可次日补。第 5 步每次更新后
+自动与 baostock 交叉验证指数数据,防脏数据误导择时/回测。
+
+> **指数基础信息(index_basic)不进日常链**:指数集合几乎不变,无每日同步的意义(还受
+> Tushare 1 次/小时限流)。index_basic 作为「指数同步清单」的权威源,由 `seed_index_basic.py`
+> 一次性铺底,需增删指数时手动重跑即可;`sync_index_daily.py` 的清单以 index_basic 为准。
 
 ## 数据源
 
@@ -62,12 +65,13 @@ Tushare token 配置在 `common/config.py` 的 `TUSHARE_TOKEN`。
 
 | 脚本 | 用途 |
 |------|------|
-| `daily_update.py` | **推荐** 收盘后一键更新(基础信息 + 日线 + 因子) |
+| `daily_update.py` | **推荐** 收盘后一键更新(基础信息 + 日线 + 因子 + 指数) |
 | `update_daily_price_v3.py` | 增量更新日线(Tushare) |
 | `rebuild_factor_pytdx.py --update` | 增量更新复权因子 + 重建前复权表(pytdx) |
 | `rebuild_daily_price.py` | 全量重建日线(Baostock,2-3 小时) |
 | `sync_stock_basic.py` | 同步个股基础信息(名称/行业等,Tushare) |
-| `sync_index_basic.py` | 同步指数基础信息到 index_basic 表(Tushare) |
+| `seed_index_basic.py` | 一次性铺底 index_basic(指数同步清单权威源,pytdx);需增删指数时重跑 |
+| `sync_index_basic.py` | 备用:从 Tushare 同步指数基础信息全字段(**不进日常链**,受限流) |
 | `sync_index_daily.py` | 同步指数行情到 index_daily_price 表(pytdx,无限流) |
 | `verify_index_baostock.py` | 与 baostock 交叉验证指数行情(每次更新后自动体检) |
 | `sync_financials_by_quarter.py` | 季度财务数据同步 |
